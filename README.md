@@ -8,6 +8,11 @@ A MySQL case study that analyses a marketplace's transaction data to understand 
 
 The analysis is built on a single table, `marketplace_transactions`, in the database `case_study_1`. It goes beyond top-line GMV and builds a **contribution proxy** to measure the true economics of each month, customer, category and acquisition cohort.
 
+
+![MySQL](https://img.shields.io/badge/MySQL-8.0+-4479A1?logo=mysql&logoColor=white)
+![SQL](https://img.shields.io/badge/Language-SQL-orange)
+![Status](https://img.shields.io/badge/Status-Completed-brightgreen)
+
 **Contribution proxy (Delivered orders only):**
 
 ```
@@ -96,4 +101,4 @@ _Add your results here after running the queries, for example:_
 
 ## Author
 
-Ariba
+Ariba siddiqui
