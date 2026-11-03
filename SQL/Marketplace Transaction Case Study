@@ -1,0 +1,1319 @@
+CREATE DATABASE case_study_1;
+
+USE case_study_1;
+
+SELECT * FROM marketplace_transactions;
+
+SHOW TABLES ;
+
+-- 1. Reconstruct the commercial performance bridge. 
+/* Calculate monthly GMV, delivered GMV, cancelled GMV, returned GMV, discounts, refunds, seller commission,
+payment fees, fulfilment costs, and contribution proxy. Compare month-over-month growth in order count,
+GMV, delivered GMV, and contribution proxy. Identify months with positive GMV growth but negative
+contribution growth. */
+
+-- Step 1 : check data 
+SELECT *
+FROM marketplace_transactions
+LIMIT 10; 
+
+-- Step 2 : Monthly GMV Analysis
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(quantity * unit_selling_price) AS gross_sales,
+    SUM(discount_amount) AS total_discount,
+    SUM(quantity * unit_selling_price - discount_amount) AS total_gmv
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 3: Monthly Delivered GMV
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(
+        CASE
+            WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0
+        END
+    ) AS delivered_gmv
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 4: Cancelled GMV
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(
+        CASE
+            WHEN order_status = 'Cancelled'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0
+        END
+    ) AS cancelled_gmv
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 5: Returned GMV 
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(
+        CASE
+            WHEN order_status = 'Returned'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0
+        END
+    ) AS returned_gmv
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 6: Discounts
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(discount_amount) AS total_discount
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 7: Refunds
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(refund_amount) AS total_refunds
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 8: Seller Commission
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(
+        CASE
+            WHEN order_status = 'Delivered'
+            THEN (quantity * unit_selling_price - discount_amount)
+                 * seller_commission_rate
+            ELSE 0
+        END
+    ) AS seller_commission_proxy
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month;
+
+-- Step 9: Payment Fees
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(payment_fee) AS total_payment_fees
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month ASC;
+
+-- Step 10: Fulfilment costs
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(fulfilment_cost) AS total_fulfilment_cost
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month ASC;
+
+-- Step 11: Contribution Proxy
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    SUM(
+        CASE
+            WHEN order_status = 'Delivered'
+            THEN (quantity * unit_selling_price - discount_amount)
+                 - refund_amount
+                 - payment_fee
+                 - fulfilment_cost
+            ELSE 0
+        END
+    ) AS contribution_proxy
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month ASC;
+
+-- Step 12: Monthly Order Count
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+    COUNT(DISTINCT order_id) AS total_orders
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month ASC;
+
+-- Step 13: Month-over-Month Order Count Growth
+
+WITH monthly_orders AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+order_growth AS (
+    SELECT
+        month,
+        total_orders,
+        LAG(total_orders) OVER (ORDER BY month) AS previous_month_orders
+    FROM monthly_orders
+)
+SELECT
+    month,
+    total_orders,
+    previous_month_orders,
+    total_orders - previous_month_orders AS order_count_change,
+    ROUND(
+        100.0 * (total_orders - previous_month_orders)
+        / NULLIF(previous_month_orders, 0),
+        2
+    ) AS order_growth_pct
+FROM order_growth
+ORDER BY month ASC;
+
+-- Step 14: Month-over-Month GMV Growth
+
+WITH monthly_gmv AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+        SUM(quantity * unit_selling_price - discount_amount) AS total_gmv
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+gmv_growth AS (
+    SELECT
+        month,
+        total_gmv,
+        LAG(total_gmv) OVER (ORDER BY month) AS previous_month_gmv
+    FROM monthly_gmv
+)
+SELECT
+    month,
+    ROUND(total_gmv, 2) AS total_gmv,
+    ROUND(previous_month_gmv, 2) AS previous_month_gmv,
+    ROUND(total_gmv - previous_month_gmv, 2) AS gmv_change,
+    ROUND(
+        100.0 * (total_gmv - previous_month_gmv)
+        / NULLIF(previous_month_gmv, 0),
+        2
+    ) AS gmv_growth_pct
+FROM gmv_growth
+ORDER BY month ASC;
+
+-- Step 15: Month-over-Month Delivered GMV Growth
+
+WITH monthly_delivered AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price - discount_amount
+                ELSE 0
+            END
+        ) AS delivered_gmv
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+delivered_growth AS (
+    SELECT
+        month,
+        delivered_gmv,
+        LAG(delivered_gmv) OVER (ORDER BY month) AS previous_month_delivered_gmv
+    FROM monthly_delivered
+)
+SELECT
+    month,
+    ROUND(delivered_gmv, 2) AS delivered_gmv,
+    ROUND(previous_month_delivered_gmv, 2) AS previous_month_delivered_gmv,
+    ROUND(delivered_gmv - previous_month_delivered_gmv, 2) AS gmv_change,
+    ROUND(
+        100.0 * (delivered_gmv - previous_month_delivered_gmv)
+        / NULLIF(previous_month_delivered_gmv, 0),
+        2
+    ) AS delivered_gmv_growth_pct
+FROM delivered_growth
+ORDER BY month ASC;
+
+-- Step 16: Month-over-Month Contribution Proxy Growth
+
+WITH monthly_contribution AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN (quantity * unit_selling_price - discount_amount)
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ) AS contribution_proxy
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+contribution_growth AS (
+    SELECT
+        month,
+        contribution_proxy,
+        LAG(contribution_proxy) OVER (ORDER BY month) AS previous_month_contribution
+    FROM monthly_contribution
+)
+SELECT
+    month,
+    ROUND(contribution_proxy, 2) AS contribution_proxy,
+    ROUND(previous_month_contribution, 2) AS previous_month_contribution,
+    ROUND(contribution_proxy - previous_month_contribution, 2) AS contribution_change,
+    ROUND(
+        100.0 * (contribution_proxy - previous_month_contribution)
+        / NULLIF(previous_month_contribution, 0),
+        2
+    ) AS contribution_growth_pct
+FROM contribution_growth
+ORDER BY month ASC;
+
+-- Step 17: Identify Months with Positive GMV Growth but Negative Contribution Growth
+
+WITH monthly_metrics AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+
+        SUM(quantity * unit_selling_price - discount_amount) AS total_gmv,
+
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN (quantity * unit_selling_price - discount_amount)
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ) AS contribution_proxy
+
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+growth_metrics AS (
+    SELECT
+        month,
+        total_gmv,
+        contribution_proxy,
+
+        100.0 * (
+            total_gmv - LAG(total_gmv) OVER (ORDER BY month)
+        ) / NULLIF(
+            LAG(total_gmv) OVER (ORDER BY month), 0
+        ) AS gmv_growth_pct,
+
+        100.0 * (
+            contribution_proxy -
+            LAG(contribution_proxy) OVER (ORDER BY month)
+        ) / NULLIF(
+            LAG(contribution_proxy) OVER (ORDER BY month), 0
+        ) AS contribution_growth_pct
+
+    FROM monthly_metrics
+)
+SELECT
+    month,
+    ROUND(gmv_growth_pct, 2) AS gmv_growth_pct,
+    ROUND(contribution_growth_pct, 2) AS contribution_growth_pct
+FROM growth_metrics
+WHERE gmv_growth_pct > 0
+  AND contribution_growth_pct < 0
+ORDER BY month;
+
+-- Step 18: Check Both Growth Metrics
+WITH monthly_metrics AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+        SUM(quantity * unit_selling_price - discount_amount) AS total_gmv,
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN (quantity * unit_selling_price - discount_amount)
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ) AS contribution_proxy
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+growth_metrics AS (
+    SELECT
+        month,
+        total_gmv,
+        contribution_proxy,
+        LAG(total_gmv) OVER (ORDER BY month) AS previous_gmv,
+        LAG(contribution_proxy) OVER (ORDER BY month) AS previous_contribution
+    FROM monthly_metrics
+)
+SELECT
+    month,
+    ROUND(100.0 * (total_gmv - previous_gmv)
+        / NULLIF(previous_gmv, 0), 2) AS gmv_growth_pct,
+    ROUND(100.0 * (contribution_proxy - previous_contribution)
+        / NULLIF(previous_contribution, 0), 2) AS contribution_growth_pct
+FROM growth_metrics
+ORDER BY month;
+
+-- Step 19: Monthly GMV, Delivered GMV , Contribution Summary
+
+SELECT
+    DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+
+    ROUND(
+        SUM(quantity * unit_selling_price - discount_amount), 2
+    ) AS total_gmv,
+
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price - discount_amount
+                ELSE 0
+            END
+        ), 2
+    ) AS delivered_gmv,
+
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN (quantity * unit_selling_price - discount_amount)
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ), 2
+    ) AS contribution_proxy
+
+FROM marketplace_transactions
+GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+ORDER BY month ASC;
+
+-- ===================================================================================================================================
+
+# Final Query
+
+USE case_study_1;
+
+WITH monthly_metrics AS (
+    SELECT
+        DATE_FORMAT(order_timestamp, '%Y-%m') AS month,
+
+        SUM(quantity * unit_selling_price - discount_amount)
+            AS total_gmv,
+
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS delivered_gmv,
+
+        COUNT(DISTINCT
+            CASE WHEN order_status = 'Delivered'
+            THEN order_id END
+        ) AS delivered_orders,
+
+        SUM(discount_amount) AS discounts,
+
+        SUM(refund_amount) AS refunds,
+
+        SUM(
+            CASE WHEN order_status = 'Cancelled'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS cancelled_gmv,
+
+        SUM(
+            CASE WHEN order_status = 'Returned'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS returned_gmv,
+
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN (quantity * unit_selling_price - discount_amount)
+                 * seller_commission_rate
+            ELSE 0 END
+        ) AS seller_commission_proxy,
+
+        SUM(payment_fee) AS payment_fees,
+
+        SUM(fulfilment_cost) AS fulfilment_costs,
+
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN (quantity * unit_selling_price - discount_amount)
+                 - refund_amount - payment_fee - fulfilment_cost
+            ELSE 0 END
+        ) AS contribution_proxy
+
+    FROM marketplace_transactions
+    GROUP BY DATE_FORMAT(order_timestamp, '%Y-%m')
+),
+
+growth_metrics AS (
+    SELECT
+        *,
+        100.0 * (
+            delivered_gmv - LAG(delivered_gmv) OVER (ORDER BY month)
+        ) / NULLIF(
+            LAG(delivered_gmv) OVER (ORDER BY month), 0
+        ) AS gmv_growth_pct,
+
+        100.0 * (
+            contribution_proxy
+            - LAG(contribution_proxy) OVER (ORDER BY month)
+        ) / NULLIF(
+            LAG(contribution_proxy) OVER (ORDER BY month), 0
+        ) AS contribution_growth_pct
+
+    FROM monthly_metrics
+)
+
+SELECT
+    month,
+    ROUND(delivered_gmv, 2) AS delivered_gmv,
+    delivered_orders,
+    ROUND(discounts, 2) AS discounts,
+    ROUND(refunds, 2) AS refunds,
+    ROUND(contribution_proxy, 2) AS contribution_proxy,
+    ROUND(gmv_growth_pct, 2) AS gmv_growth_pct,
+    ROUND(contribution_growth_pct, 2) AS contribution_growth_pct
+
+FROM growth_metrics
+ORDER BY month ASC;
+
+-- 2. Customer concentration and economic dependency
+/* Calculate the share of delivered GMV and contribution proxy generated by the top 1%, 5%, and 10% of
+customers. Calculate repeat-purchase participation and identify customers whose delivered GMV is above the
+90th percentile but whose contribution proxy is negative. Determine whether the largest customers are also
+the most profitable.*/
+
+-- Step 1: Calculate Customer-wise Delivered GMV and Contribution Proxy
+
+SELECT
+    customer_id,
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price - discount_amount
+                ELSE 0
+            END
+        ), 2
+    ) AS delivered_gmv,
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price
+                     - discount_amount
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ), 2
+    ) AS contribution_proxy
+FROM marketplace_transactions
+GROUP BY customer_id
+ORDER BY delivered_gmv DESC;
+
+-- Step 2: Customer Concentration 
+
+WITH customer_totals AS (
+    SELECT
+        customer_id,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS delivered_gmv,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price
+                 - discount_amount
+                 - refund_amount
+                 - payment_fee
+                 - fulfilment_cost
+            ELSE 0 END
+        ) AS contribution_proxy
+    FROM marketplace_transactions
+    GROUP BY customer_id
+),
+ranked AS (
+    SELECT *,
+        NTILE(100) OVER (
+            ORDER BY delivered_gmv DESC
+        ) AS pct_bucket
+    FROM customer_totals
+),
+company AS (
+    SELECT
+        SUM(delivered_gmv) AS total_gmv,
+        SUM(contribution_proxy) AS total_contribution
+    FROM customer_totals
+)
+SELECT
+    bands.concentration_band,
+    COUNT(r.customer_id) AS customer_count,
+    ROUND(SUM(r.delivered_gmv), 2) AS delivered_gmv,
+    ROUND(SUM(r.contribution_proxy), 2) AS contribution_proxy,
+    ROUND(
+        100 * SUM(r.delivered_gmv) /
+        NULLIF(c.total_gmv, 0), 2
+    ) AS share_of_total_gmv_pct,
+    ROUND(
+        100 * SUM(r.contribution_proxy) /
+        NULLIF(c.total_contribution, 0), 2
+    ) AS share_of_total_contribution_pct
+FROM (
+    SELECT 1 AS bucket_limit, 'Top 1%' AS concentration_band
+    UNION ALL SELECT 5, 'Top 5%'
+    UNION ALL SELECT 10, 'Top 10%'
+) AS bands
+CROSS JOIN company c
+LEFT JOIN ranked r
+    ON r.pct_bucket <= bands.bucket_limit
+GROUP BY
+    bands.bucket_limit,
+    bands.concentration_band,
+    c.total_gmv,
+    c.total_contribution
+ORDER BY bands.bucket_limit;
+
+-- Step 3: Calculate Repeat Purchase Participation
+
+WITH customer_orders AS (
+    SELECT
+        customer_id,
+        COUNT(DISTINCT order_id) AS delivered_order_count
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY customer_id
+)
+SELECT
+    COUNT(*) AS total_customers,
+    SUM(
+        CASE
+            WHEN delivered_order_count >= 2 THEN 1
+            ELSE 0
+        END
+    ) AS repeat_customers,
+    ROUND(
+        100.0 * SUM(
+            CASE
+                WHEN delivered_order_count >= 2 THEN 1
+                ELSE 0
+            END
+        ) / NULLIF(COUNT(*), 0),
+        2
+    ) AS repeat_purchase_participation_pct
+FROM customer_orders;
+
+-- Step 4: Identify High-Value Customers with Negative Contribution
+
+WITH customer_totals AS (
+    SELECT
+        customer_id,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS delivered_gmv,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price
+                 - discount_amount
+                 - refund_amount
+                 - payment_fee
+                 - fulfilment_cost
+            ELSE 0 END
+        ) AS contribution_proxy,
+        COUNT(DISTINCT CASE
+            WHEN order_status = 'Delivered' THEN order_id
+        END) AS delivered_order_count
+    FROM marketplace_transactions
+    GROUP BY customer_id
+),
+ranked_customers AS (
+    SELECT *,
+        CUME_DIST() OVER (
+            ORDER BY delivered_gmv
+        ) AS gmv_percentile
+    FROM customer_totals
+)
+SELECT
+    customer_id,
+    ROUND(delivered_gmv, 2) AS delivered_gmv,
+    ROUND(contribution_proxy, 2) AS contribution_proxy,
+    delivered_order_count,
+    ROUND(gmv_percentile, 2) AS gmv_percentile,
+    'Yes' AS negative_contribution
+FROM ranked_customers
+WHERE gmv_percentile > 0.90
+  AND contribution_proxy < 0
+ORDER BY delivered_gmv DESC;
+
+-- 3 Discount dependency and commercial quality
+/* Calculate discount rates by product category and acquisition channel. Identify categories where higher
+discount rates coincide with lower contribution per delivered order. Compare customer segments by average
+order value, repeat-purchase frequency, discount dependency, refund burden, and contribution proxy. Identify
+high-value transactions with weak post-discount economics. */
+
+-- Step 1: Calculate Discount Rate by Product Category
+
+SELECT
+    product_category,
+    ROUND(
+        100.0 * SUM(discount_amount) /
+        NULLIF(SUM(quantity * unit_list_price), 0),
+        2
+    ) AS discount_rate_pct
+FROM marketplace_transactions
+GROUP BY product_category
+ORDER BY discount_rate_pct DESC;
+
+-- Step 2: Calculate Discount Rate by Acquisition Channel
+
+SELECT
+    acquisition_channel,
+    ROUND(
+        100.0 * SUM(discount_amount) /
+        NULLIF(SUM(quantity * unit_list_price), 0),
+        2
+    ) AS discount_rate_pct
+FROM marketplace_transactions
+GROUP BY acquisition_channel
+ORDER BY discount_rate_pct DESC;
+
+-- Step 3: Analyse Category Commercial Quality
+
+WITH category_metrics AS (
+    SELECT
+        product_category,
+        SUM(discount_amount) AS total_discount,
+        SUM(quantity * unit_list_price) AS total_list_value,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price
+                 - discount_amount
+                 - refund_amount
+                 - payment_fee
+                 - fulfilment_cost
+            ELSE 0 END
+        ) AS contribution_proxy,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN 1 ELSE 0 END
+        ) AS delivered_orders,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN refund_amount ELSE 0 END
+        ) AS delivered_refunds,
+        SUM(
+            CASE WHEN order_status = 'Delivered'
+            THEN quantity * unit_selling_price - discount_amount
+            ELSE 0 END
+        ) AS delivered_gmv
+    FROM marketplace_transactions
+    GROUP BY product_category
+)
+SELECT
+    product_category,
+    ROUND(
+        100.0 * total_discount /
+        NULLIF(total_list_value, 0), 2
+    ) AS discount_rate_pct,
+    ROUND(
+        contribution_proxy /
+        NULLIF(delivered_orders, 0), 2
+    ) AS contribution_per_order,
+    ROUND(
+        100.0 * delivered_refunds /
+        NULLIF(delivered_gmv, 0), 2
+    ) AS refund_rate_pct,
+    CASE
+        WHEN contribution_proxy / NULLIF(delivered_orders, 0) < 100
+             OR 100.0 * delivered_refunds /
+                NULLIF(delivered_gmv, 0) >= 8
+            THEN 'High'
+        WHEN contribution_proxy / NULLIF(delivered_orders, 0) < 200
+             OR 100.0 * delivered_refunds /
+                NULLIF(delivered_gmv, 0) >= 4
+            THEN 'Medium'
+        ELSE 'Low'
+    END AS commercial_risk
+FROM category_metrics
+ORDER BY contribution_per_order ASC;
+
+-- Step 4: Customer Segment Comparison — Average Order Value
+
+SELECT
+    customer_id,
+    ROUND(
+        AVG(quantity * unit_selling_price - discount_amount),
+        2
+    ) AS average_order_value
+FROM marketplace_transactions
+GROUP BY customer_id
+ORDER BY average_order_value DESC;
+
+-- Step 5: Repeat-Purchase Frequency
+
+SELECT
+    customer_id,
+    COUNT(*) AS delivered_order_count
+FROM marketplace_transactions
+WHERE order_status = 'Delivered'
+GROUP BY customer_id
+ORDER BY delivered_order_count DESC;
+
+-- Step 6: Discount Dependency by Customer
+
+SELECT
+    customer_id,
+    ROUND(
+        100.0 * SUM(discount_amount) /
+        NULLIF(SUM(quantity * unit_list_price), 0),
+        2
+    ) AS discount_dependency_pct
+FROM marketplace_transactions
+GROUP BY customer_id
+ORDER BY discount_dependency_pct DESC;
+
+-- Step 7: Refund Burden by Customer
+
+SELECT
+    customer_id,
+    ROUND(SUM(refund_amount), 2) AS refund_burden
+FROM marketplace_transactions
+GROUP BY customer_id
+ORDER BY refund_burden DESC;
+
+-- Step 8: Contribution Proxy by Customer
+
+SELECT
+    customer_id,
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price
+                     - discount_amount
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ), 2
+    ) AS contribution_proxy
+FROM marketplace_transactions
+GROUP BY customer_id
+ORDER BY contribution_proxy DESC;
+
+-- Step 9: High-Value Transactions with Weak Post-Discount Economics
+
+WITH transaction_metrics AS (
+    SELECT
+        order_id,
+        customer_id,
+        SUM(quantity * unit_selling_price - discount_amount)
+            AS delivered_gmv,
+        SUM(
+            quantity * unit_selling_price
+            - discount_amount
+            - refund_amount
+            - payment_fee
+            - fulfilment_cost
+        ) AS contribution_proxy
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY order_id, customer_id
+)
+SELECT
+    order_id,
+    customer_id,
+    ROUND(delivered_gmv, 2) AS delivered_gmv,
+    ROUND(contribution_proxy, 2) AS contribution_proxy
+FROM transaction_metrics
+WHERE delivered_gmv >= (
+    SELECT AVG(delivered_gmv)
+    FROM transaction_metrics
+)
+AND contribution_proxy <= 0
+ORDER BY delivered_gmv DESC;
+
+-- -- Step 10: 10% Delivered GMV Reduction Scenario Estimate
+
+WITH category_metrics AS (
+    SELECT
+        product_category,
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price
+                     - discount_amount
+                ELSE 0
+            END
+        ) AS delivered_gmv,
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN quantity * unit_selling_price
+                     - discount_amount
+                     - refund_amount
+                     - payment_fee
+                     - fulfilment_cost
+                ELSE 0
+            END
+        ) AS contribution_proxy
+    FROM marketplace_transactions
+    GROUP BY product_category
+)
+SELECT
+    product_category,
+    ROUND(delivered_gmv, 2) AS delivered_gmv,
+    ROUND(contribution_proxy, 2) AS contribution_proxy,
+    ROUND(delivered_gmv * 0.10, 2) AS gmv_reduction_scenario,
+    ROUND(contribution_proxy * 0.10, 2)
+        AS contribution_proxy_at_risk
+FROM category_metrics
+ORDER BY contribution_proxy_at_risk DESC;
+
+-- 4. Acquisition cohort quality
+/* Build acquisition-month cohorts. Compare first-purchase contribution, 90-day cumulative contribution, and
+repeat-purchase rate by acquisition channel. Identify cohorts where first-purchase economics are positive but
+90-day economics deteriorate, and flag incomplete 90-day windows. */
+
+-- Check Table Structure and Data Types
+
+DESCRIBE marketplace_transactions;
+
+-- Step 1: Check Date Format
+
+SELECT customer_acquisition_date, order_timestamp
+FROM marketplace_transactions
+LIMIT 10;
+
+-- Step 2 : Build Acquisition-Month Cohorts
+
+SELECT
+    acquisition_channel,
+    DATE_FORMAT(
+        STR_TO_DATE(customer_acquisition_date, '%Y-%m-%d'),
+        '%Y-%m'
+    ) AS cohort_month,
+    COUNT(DISTINCT customer_id) AS acquired_customers
+FROM marketplace_transactions
+GROUP BY acquisition_channel, cohort_month
+ORDER BY cohort_month, acquisition_channel;
+
+-- Step 3: Identify First Delivered Purchase 
+
+WITH delivered_orders AS (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        order_id,
+        MIN(STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s')) AS order_date,
+        SUM(
+            quantity * unit_selling_price
+            - discount_amount
+            - refund_amount
+            - payment_fee
+            - fulfilment_cost
+        ) AS contribution
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY customer_id, acquisition_channel, order_id
+),
+ranked_orders AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY customer_id
+            ORDER BY order_date, order_id
+        ) AS purchase_rank
+    FROM delivered_orders
+)
+SELECT
+    customer_id,
+    acquisition_channel,
+    order_id,
+    order_date AS first_purchase_date,
+    ROUND(contribution, 2) AS first_purchase_contribution
+FROM ranked_orders
+WHERE purchase_rank = 1
+ORDER BY first_purchase_date;
+
+-- Step 4: Calculate 90-Day Cumulative Contribution
+
+WITH delivered_orders AS (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        order_id,
+        MIN(STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s')) AS order_date,
+        SUM(
+            quantity * unit_selling_price
+            - discount_amount
+            - refund_amount
+            - payment_fee
+            - fulfilment_cost
+        ) AS contribution
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY customer_id, acquisition_channel, order_id
+),
+first_purchase AS (
+    SELECT
+        customer_id,
+        MIN(order_date) AS first_purchase_date
+    FROM delivered_orders
+    GROUP BY customer_id
+)
+SELECT
+    d.customer_id,
+    ROUND(SUM(d.contribution), 2) AS contribution_90d
+FROM delivered_orders d
+JOIN first_purchase f
+    ON d.customer_id = f.customer_id
+WHERE d.order_date >= f.first_purchase_date
+  AND d.order_date < DATE_ADD(f.first_purchase_date, INTERVAL 90 DAY)
+GROUP BY d.customer_id
+ORDER BY d.customer_id;
+
+-- Step 5: Calculate Repeat-Purchase Rate by Acquisition Channel 
+
+SELECT
+    acquisition_channel,
+    ROUND(
+        100.0 * SUM(
+            CASE WHEN delivered_orders >= 2 THEN 1 ELSE 0 END
+        ) / NULLIF(COUNT(*), 0),
+        2
+    ) AS repeat_purchase_rate_pct
+FROM (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        COUNT(DISTINCT order_id) AS delivered_orders
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY customer_id, acquisition_channel
+) AS c
+GROUP BY acquisition_channel
+ORDER BY acquisition_channel;
+
+-- Step 6: Final Acquisition Cohort Quality
+
+WITH delivered_orders AS (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        order_id,
+        MIN(STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s')) AS order_date,
+        SUM(
+            quantity * unit_selling_price
+            - discount_amount
+            - refund_amount
+            - payment_fee
+            - fulfilment_cost
+        ) AS contribution
+    FROM marketplace_transactions
+    WHERE order_status = 'Delivered'
+    GROUP BY customer_id, acquisition_channel, order_id
+),
+
+ranked_orders AS (
+    SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY customer_id
+            ORDER BY order_date, order_id
+        ) AS purchase_rank
+    FROM delivered_orders
+),
+
+first_purchase AS (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        order_date AS first_purchase_date,
+        contribution AS first_purchase_contribution
+    FROM ranked_orders
+    WHERE purchase_rank = 1
+),
+
+customer_cohorts AS (
+    SELECT
+        customer_id,
+        acquisition_channel,
+        DATE_FORMAT(
+            STR_TO_DATE(
+                MIN(customer_acquisition_date),
+                '%Y-%m-%d'
+            ),
+            '%Y-%m'
+        ) AS cohort_month
+    FROM marketplace_transactions
+    GROUP BY customer_id, acquisition_channel
+),
+
+customer_metrics AS (
+    SELECT
+        f.customer_id,
+        f.acquisition_channel,
+        c.cohort_month,
+        f.first_purchase_date,
+        f.first_purchase_contribution,
+        SUM(
+            CASE
+                WHEN d.order_date >= f.first_purchase_date
+                 AND d.order_date < DATE_ADD(
+                     f.first_purchase_date, INTERVAL 90 DAY
+                 )
+                THEN d.contribution
+                ELSE 0
+            END
+        ) AS contribution_90d,
+        COUNT(DISTINCT d.order_id) AS delivered_orders,
+        MAX(d.order_date) AS last_observed_order_date
+    FROM first_purchase f
+    JOIN customer_cohorts c
+        ON f.customer_id = c.customer_id
+       AND f.acquisition_channel = c.acquisition_channel
+    JOIN delivered_orders d
+        ON f.customer_id = d.customer_id
+       AND f.acquisition_channel = d.acquisition_channel
+    GROUP BY
+        f.customer_id,
+        f.acquisition_channel,
+        c.cohort_month,
+        f.first_purchase_date,
+        f.first_purchase_contribution
+),
+
+data_cutoff AS (
+    SELECT MAX(order_date) AS max_order_date
+    FROM delivered_orders
+)
+
+SELECT
+    cm.acquisition_channel,
+    cm.cohort_month,
+    COUNT(DISTINCT cm.customer_id) AS acquired_customers,
+    ROUND(SUM(cm.first_purchase_contribution), 2)
+        AS first_purchase_contribution,
+
+    ROUND(
+        CASE
+            WHEN DATE_ADD(
+                STR_TO_DATE(CONCAT(cm.cohort_month, '-01'), '%Y-%m-%d'),
+                INTERVAL 3 MONTH
+            ) <= dc.max_order_date
+            THEN SUM(cm.contribution_90d)
+            ELSE NULL
+        END,
+        2
+    ) AS contribution_90d,
+
+    CASE
+        WHEN DATE_ADD(
+            STR_TO_DATE(CONCAT(cm.cohort_month, '-01'), '%Y-%m-%d'),
+            INTERVAL 3 MONTH
+        ) <= dc.max_order_date
+        THEN ROUND(
+            100.0 * SUM(
+                CASE WHEN cm.delivered_orders >= 2 THEN 1 ELSE 0 END
+            ) / NULLIF(COUNT(DISTINCT cm.customer_id), 0),
+            2
+        )
+        ELSE NULL
+    END AS repeat_purchase_rate_pct,
+
+    CASE
+        WHEN DATE_ADD(
+            STR_TO_DATE(CONCAT(cm.cohort_month, '-01'), '%Y-%m-%d'),
+            INTERVAL 3 MONTH
+        ) <= dc.max_order_date
+        THEN 'Yes'
+        ELSE 'No'
+    END AS cohort_complete
+
+FROM customer_metrics cm
+CROSS JOIN data_cutoff dc
+GROUP BY
+    cm.acquisition_channel,
+    cm.cohort_month,
+    dc.max_order_date
+ORDER BY
+    cm.cohort_month,
+    cm.acquisition_channel;
+    
+-- 5. Commercial downside scenario
+/* Quantify current monthly contribution by category. Calculate the break-even delivered-GMV decline that
+eliminates the benefit of a 10% reduction in discount expense. Identify categories with the smallest tolerance
+for volume decline. */
+
+-- Step 1 — Current Monthly Contribution by Category
+
+SELECT
+    DATE_FORMAT(
+        STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s'),
+        '%Y-%m'
+    ) AS order_month,
+    product_category,
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered' THEN
+                    quantity * unit_selling_price
+                    - discount_amount
+                    - refund_amount
+                    - payment_fee
+                    - fulfilment_cost
+                ELSE 0
+            END
+        ), 2
+    ) AS current_contribution
+FROM marketplace_transactions
+GROUP BY order_month, product_category
+ORDER BY order_month, product_category;
+
+-- Step 2 — Calculate 10% Discount Saving
+
+SELECT
+    DATE_FORMAT(
+        STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s'),
+        '%Y-%m'
+    ) AS order_month,
+    product_category,
+    ROUND(
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN discount_amount * 0.10
+                ELSE 0
+            END
+        ), 2
+    ) AS discount_saving_scenario
+FROM marketplace_transactions
+GROUP BY order_month, product_category
+ORDER BY order_month, product_category;
+
+-- Step 3 — Break-even GMV Decline
+
+WITH monthly_category AS (
+    SELECT
+        DATE_FORMAT(
+            STR_TO_DATE(order_timestamp, '%Y-%m-%d %H:%i:%s'),
+            '%Y-%m'
+        ) AS order_month,
+        product_category,
+
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered' THEN
+                    quantity * unit_selling_price
+                    - discount_amount
+                    - refund_amount
+                    - payment_fee
+                    - fulfilment_cost
+                ELSE 0
+            END
+        ) AS current_contribution,
+
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN discount_amount * 0.10
+                ELSE 0
+            END
+        ) AS discount_saving
+
+    FROM marketplace_transactions
+    GROUP BY order_month, product_category
+)
+
+SELECT
+    order_month,
+    product_category,
+    ROUND(current_contribution, 2) AS current_contribution,
+    ROUND(discount_saving, 2) AS discount_saving_scenario,
+    ROUND(current_contribution, 2)
+        AS contribution_at_risk_per_100pct_gmv_decline,
+
+    ROUND(
+        100.0 * discount_saving
+        / NULLIF(current_contribution, 0),
+        2
+    ) AS break_even_gmv_decline_pct
+
+FROM monthly_category
+ORDER BY break_even_gmv_decline_pct ASC;
+
+-- Step 4 : Acquisition Cohort Quality
+
+WITH category_scenario AS (
+    SELECT
+        product_category,
+
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered' THEN
+                    quantity * unit_selling_price
+                    - discount_amount
+                    - refund_amount
+                    - payment_fee
+                    - fulfilment_cost
+                ELSE 0
+            END
+        ) AS current_contribution,
+
+        0.10 * SUM(
+            CASE
+                WHEN order_status = 'Delivered'
+                THEN discount_amount
+                ELSE 0
+            END
+        ) AS discount_saving,
+
+        SUM(
+            CASE
+                WHEN order_status = 'Delivered' THEN
+                    quantity * unit_selling_price
+                    - discount_amount
+                    - refund_amount
+                    - payment_fee
+                    - fulfilment_cost
+                ELSE 0
+            END
+        ) AS contribution_at_risk
+
+    FROM marketplace_transactions
+    GROUP BY product_category
+)
+
+SELECT
+    product_category,
+    ROUND(current_contribution, 2) AS current_contribution,
+    ROUND(discount_saving, 2) AS discount_saving_scenario,
+    ROUND(contribution_at_risk, 2)
+        AS contribution_at_risk_per_100pct_gmv_decline,
+
+    ROUND(
+        100.0 * discount_saving
+        / NULLIF(contribution_at_risk, 0),
+        2
+    ) AS break_even_gmv_decline_pct
+
+FROM category_scenario
+ORDER BY break_even_gmv_decline_pct ASC;
+
